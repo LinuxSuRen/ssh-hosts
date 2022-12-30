@@ -1,0 +1,15 @@
+Host master
+  HostName 10.121.218.184
+  User root
+
+Host node1
+  HostName 10.121.218.185
+  User root
+
+Host node2
+  HostName 10.121.218.186
+  User root
+
+Host vm
+  HostName 10.121.218.242
+  User root
