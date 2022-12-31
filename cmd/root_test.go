@@ -21,10 +21,10 @@ func Test_getHostRecords1(t *testing.T) {
 		name: "normal",
 		args: args{dir: "data"},
 		wantRecords: map[string]string{
-			"master": "10.121.218.184",
-			"node1":  "10.121.218.185",
-			"node2":  "10.121.218.186",
-			"vm":     "10.121.218.242",
+			"10.121.218.184": "master",
+			"10.121.218.185": "node1",
+			"10.121.218.186": "node2",
+			"10.121.218.242": "vm",
 		},
 		wantErr: false,
 	}}
@@ -57,12 +57,27 @@ func Test_writeToHosts(t *testing.T) {
 		args: args{
 			dir: "data/hosts",
 			hosts: map[string]string{
-				"vm": "192.168.1.1",
+				"192.168.1.1": "vm",
 			},
 		},
 		wantErr: false,
 		wantText: `192.168.1.6     host.docker.internal
-192.168.1.1 vm`,
+# start with ssh-hosts
+192.168.1.1 vm
+# end with ssh-hosts`,
+	}, {
+		name: "with placeholder",
+		args: args{
+			dir: "data/hosts-with-placeholder",
+			hosts: map[string]string{
+				"192.168.1.1": "vm1",
+			},
+		},
+		wantErr: false,
+		wantText: `192.168.1.6     host.docker.internal
+# start with ssh-hosts
+192.168.1.1 vm1
+# end with ssh-hosts`,
 	}}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -80,6 +95,55 @@ func Test_writeToHosts(t *testing.T) {
 			data, err = os.ReadFile(f.Name())
 			assert.Nil(t, err)
 			assert.Equal(t, tt.wantText, string(data))
+		})
+	}
+}
+
+func Test_findExistRecords(t *testing.T) {
+	type args struct {
+		lines []string
+		index int
+	}
+	tests := []struct {
+		name         string
+		args         args
+		wantHosts    map[string]string
+		wantEndIndex int
+	}{{
+		name: "normal",
+		args: args{
+			lines: []string{
+				"192.168.1.1 fake.com",
+				beginLine,
+				"140.82.114.3 github.com",
+				endLine,
+				"192.168.1.1 fake.com",
+			},
+			index: 1,
+		},
+		wantHosts: map[string]string{
+			"140.82.114.3": "github.com",
+		},
+		wantEndIndex: 3,
+	}, {
+		name: "empty record",
+		args: args{
+			lines: []string{
+				"192.168.1.1 fake.com",
+				beginLine,
+				endLine,
+				"192.168.1.1 fake.com",
+			},
+			index: 1,
+		},
+		wantHosts:    map[string]string{},
+		wantEndIndex: 2,
+	}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotHosts, gotEndIndex := findExistRecords(tt.args.lines, tt.args.index)
+			assert.Equalf(t, tt.wantHosts, gotHosts, "findExistRecords(%v, %v)", tt.args.lines, tt.args.index)
+			assert.Equalf(t, tt.wantEndIndex, gotEndIndex, "findExistRecords(%v, %v)", tt.args.lines, tt.args.index)
 		})
 	}
 }

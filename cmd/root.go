@@ -19,7 +19,7 @@ func NewRootCommand() (c *cobra.Command) {
 	}
 
 	flags := c.Flags()
-	flags.StringVarP(&opt.sshDir, "ssh-dir", "", "~/.ssh", "The directory of ssh")
+	flags.StringVarP(&opt.sshDir, "ssh-dir", "", "$HOME/.ssh", "The directory of ssh")
 	flags.StringVarP(&opt.etcDir, "etc-dir", "", "/etc", "The directory of etc")
 	return
 }
@@ -28,7 +28,9 @@ func (o *option) runE(c *cobra.Command, args []string) (err error) {
 	for {
 		select {
 		case <-time.After(time.Second * 2):
-			_ = o.copyHostRecords(c.Context())
+			if err = o.copyHostRecords(c.Context()); err != nil {
+				return
+			}
 		case <-c.Context().Done():
 			return
 		}
@@ -42,7 +44,6 @@ func (o *option) copyHostRecords(c context.Context) (err error) {
 
 	var hosts map[string]string
 	hosts, err = getHostRecords(o.sshDir)
-	fmt.Println(hosts)
 	if err == nil && len(hosts) > 0 {
 		err = writeToHosts(path.Join(o.etcDir, "hosts"), hosts)
 	}
@@ -51,7 +52,8 @@ func (o *option) copyHostRecords(c context.Context) (err error) {
 
 func getHostRecords(dir string) (records map[string]string, err error) {
 	var data []byte
-	if data, err = os.ReadFile(path.Join(dir, "config")); err != nil {
+	configPath := os.ExpandEnv(path.Join(dir, "config"))
+	if data, err = os.ReadFile(configPath); err != nil {
 		return
 	}
 
@@ -69,11 +71,16 @@ func getHostRecords(dir string) (records map[string]string, err error) {
 		if strings.HasPrefix(line, "  HostName ") {
 			hostName = strings.TrimPrefix(line, "  HostName ")
 			hostName = strings.TrimSpace(hostName)
-			records[host] = hostName
+			records[hostName] = host
 		}
 	}
 	return
 }
+
+const (
+	beginLine = "# start with ssh-hosts"
+	endLine   = "# end with ssh-hosts"
+)
 
 func writeToHosts(hostsPath string, hosts map[string]string) (err error) {
 	var data []byte
@@ -84,26 +91,53 @@ func writeToHosts(hostsPath string, hosts map[string]string) (err error) {
 	index := -1
 	lines := strings.Split(string(data), "\n")
 	for i, line := range lines {
-		if strings.HasPrefix(line, "# start with ssh-hosts") {
+		if strings.HasPrefix(line, beginLine) {
 			index = i
 			break
 		}
 	}
 
+	existHosts := map[string]string{}
 	if index == -1 {
-		index = len(lines) - 1
-		hosts["#"] = "start with ssh-hosts"
+		lines = append(lines, []string{beginLine, endLine}...)
+		index = len(lines) - 2
+	} else {
+		var endIndex int
+		existHosts, endIndex = findExistRecords(lines, index)
+		lines = append(lines[0:index+1], lines[endIndex:]...)
 	}
 
+	// merge records
 	for host, hostName := range hosts {
-		var left []string
-		if index < len(lines) {
-			left = lines[index+1:]
-		}
-		left = append(left, fmt.Sprintf("%s %s", hostName, host))
-		lines = append(lines[0:index+1], left...)
+		existHosts[host] = hostName
+	}
+	hosts = existHosts
+
+	// insert the new records
+	for host, hostName := range hosts {
+		right := []string{fmt.Sprintf("%s %s", host, hostName)}
+		right = append(right, lines[index+1:]...)
+
+		lines = append(lines[0:index+1], right...)
 	}
 	err = os.WriteFile(hostsPath, []byte(strings.Join(lines, "\n")), 0622)
+	return
+}
+
+func findExistRecords(lines []string, index int) (hosts map[string]string, endIndex int) {
+	hosts = map[string]string{}
+	lines = lines[index:]
+	for i, line := range lines {
+		if strings.HasPrefix(line, endLine) {
+			endIndex = i + index
+			break
+		}
+
+		pair := strings.Split(line, " ")
+		if len(pair) == 2 {
+			hosts[pair[0]] = pair[1]
+		}
+	}
 	return
 }
 
